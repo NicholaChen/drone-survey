@@ -30,17 +30,16 @@ class DroneData:
     def __init__(self, flight_csv_file: str, 
                  video_files: list[str], 
                  fps: float = 29.97, 
-                 compass_heading: float = 0.0,
-                 altitude: float = 5.0,
                  resolution: tuple[int, int] = (3840, 2160),
-                 fov: float = 82.1,
+                 compass_heading: float = 0.0,
+                 altitude: float = 2.0,
                  gimbal_pitch: float = -90.0,
                  f_x: float = 2000.0,
                  f_y: float = 2000.0,
                  c_x: float = 1920.0,
                  c_y: float = 1080.0,
                  distortion: np.ndarray = np.array([0.0, 0.0, 0.0, 0.0, 0.0]),
-                 max_missing_frames: int = 10,
+                 max_missing_frames: int = 100,
                  timestep: float = 0.001,
                  AprilTagDetector: Detector = Detector(
                     families="tag36h11",
@@ -63,7 +62,6 @@ class DroneData:
         self.max_missing_frames = max_missing_frames
         self.timestep = timestep
         self.resolution = resolution
-        self.fov = fov
 
         self.f_x = f_x
         self.f_y = f_y
