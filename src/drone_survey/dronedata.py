@@ -1,4 +1,4 @@
-# written by NC
+# written by NC :P
 
 import math
 import csv
@@ -347,23 +347,19 @@ class DroneData:
     def get_pixel_from_position(self, video: int, timestamp: float, position: tuple[float, float]):
         R = getR(self.compass_heading, self.gimbal_pitch)
 
-        # Camera position in world
         Cw = np.array([
             self.x(timestamp + self.video_starts[video]),
             self.y(timestamp + self.video_starts[video]),
             self.altitude
         ]).reshape(3, 1)
 
-        # Point in world
         Pw = np.array([position[0], position[1], 0]).reshape(3, 1)
 
-        # Transform world point into camera coordinates
         Pc = R @ (Pw - Cw)
 
         if Pc[2, 0] <= 0:
             raise ValueError("Point is behind the camera (Z <= 0 in camera frame).")
 
-        # Project into pixels
         uv_h = self.optimal_camera_matrix @ Pc
         u = uv_h[0, 0] / uv_h[2, 0]
         v = uv_h[1, 0] / uv_h[2, 0]
@@ -443,8 +439,6 @@ class DroneData:
             print(" ", detection)
 
             all.append(detection)
-
-            # WEIGHT BASE ON DISTANCE FROM CENTER OF IMAGE
 
             if self.showVideo:
                 cv2.imshow('Drone Footage', dst)
