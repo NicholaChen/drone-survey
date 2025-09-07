@@ -47,6 +47,7 @@ class DroneData:
                  ),
                  pyprojTransformer: pyproj.Transformer = pyproj.Transformer.from_crs(pyproj.CRS("EPSG:4326"), pyproj.CRS("EPSG:3158"), always_xy=True), # WGS84 to UTM zone 14N
                  showVideo: bool = False,
+                 showCharts: bool = True,
                  debug: bool = False
                  ):
         """
@@ -84,6 +85,7 @@ class DroneData:
         self.pyprojTransformer = pyprojTransformer
 
         self.debug = debug
+        self.showCharts = showCharts
         self.showVideo = showVideo
 
         if not os.path.exists(flight_csv_file):
@@ -275,19 +277,33 @@ class DroneData:
             flight_csv_interpolated_t = np.arange(self.video_start_estimates[video], min(self.video_start_estimates[video] + aprilTags_t[-1], self.timestamps[-1]), self.timestep)
             video_interpolated_t = np.arange(0, aprilTags_t[-1], self.timestep)
 
+            self.x_derivative = self.x.derivative()
+            self.y_derivative = self.y.derivative()
+            self.aprilTags_x_derivative = self.aprilTags_x.derivative()
+            self.aprilTags_y_derivative = self.aprilTags_y.derivative()
+
             flight_positions = np.array([self.x(flight_csv_interpolated_t) - self.x(self.video_start_estimates[video]), self.y(flight_csv_interpolated_t) - self.y(self.video_start_estimates[video])])  # subtracts the first value to make the starting home point (0,0)
             aprilTag_positions = np.array([self.aprilTags_x(video_interpolated_t), self.aprilTags_y(video_interpolated_t)])
 
-            x_correlation = correlate(flight_positions[0], aprilTag_positions[0], mode='full')
-            y_correlation = correlate(flight_positions[1], aprilTag_positions[1], mode='full')
+            flight_positions_dot = np.array([self.x_derivative(flight_csv_interpolated_t), self.y_derivative(flight_csv_interpolated_t)])
+            aprilTag_positions_dot = np.array([self.aprilTags_x_derivative(video_interpolated_t), self.aprilTags_y_derivative(video_interpolated_t)])
+        
+            max_flight_positions_dot_0 = np.max(np.abs(flight_positions_dot[0]))
+            max_flight_positions_dot_1 = np.max(np.abs(flight_positions_dot[1]))
+            max_aprilTag_positions_dot_0 = np.max(np.abs(aprilTag_positions_dot[0]))
+            max_aprilTag_positions_dot_1 = np.max(np.abs(aprilTag_positions_dot[1]))
+
+            x_correlation = correlate(flight_positions_dot[0] / max_flight_positions_dot_0, aprilTag_positions_dot[0] / max_aprilTag_positions_dot_0, mode='full')
+            y_correlation = correlate(flight_positions_dot[1] / max_flight_positions_dot_1, aprilTag_positions_dot[1] / max_aprilTag_positions_dot_1, mode='full')
             correlation = (x_correlation / np.max(x_correlation)) + (y_correlation / np.max(y_correlation))
-            
-            lags = correlation_lags(len(flight_positions[0]), len(aprilTag_positions[0]), mode='full') * self.timestep + self.video_start_estimates[video]
+
+
+            lags = correlation_lags(len(flight_positions_dot[0]), len(aprilTag_positions_dot[0]), mode='full') * self.timestep + self.video_start_estimates[video]
             self.video_starts.append(lags[np.argmax(correlation)])
             self.calibration_finished.append(aprilTags_t[-1])
             print(f"{_GREEN}{self.video_starts[video]} seconds for video {self.video_files[video]}{_RESET}")
 
-            if self.debug:
+            if self.showCharts:
                 fig, axs = plt.subplots(2, 1, figsize=(10, 10))
                 axs[0].plot(flight_csv_interpolated_t, flight_positions[0], label='Flight X', color='b')
                 axs[0].plot([],[], label='Video X', color='r') # Placeholder for Video X
@@ -296,9 +312,9 @@ class DroneData:
                 axs[0].set_ylabel('Flight X Coordinate (m)')
                 axs[0].legend()
 
-                ax2 = axs[0].twinx()
-                ax2.plot(video_interpolated_t + self.video_starts[video], aprilTag_positions[0], label='Video X', color='r')
-                ax2.set_ylabel('Video X Coordinate (px)')
+                axs_1 = axs[0].twinx()
+                axs_1.plot(video_interpolated_t + self.video_starts[video], aprilTag_positions[0], label='Video X', color='r')
+                axs_1.set_ylabel('Video X Coordinate (px)')
 
 
                 axs[1].plot(flight_csv_interpolated_t, flight_positions[1], label='Flight Y', color='b')
@@ -308,36 +324,68 @@ class DroneData:
                 axs[1].set_ylabel('Flight Y Coordinate (m)')
                 axs[1].legend()
 
-                ax3 = axs[1].twinx()
-                ax3.plot(video_interpolated_t + self.video_starts[video], aprilTag_positions[1], label='Video Y', color='r')
-                ax3.set_ylabel('Video Y Coordinate (px)')
-                
+                axs_2 = axs[1].twinx()
+                axs_2.plot(video_interpolated_t + self.video_starts[video], aprilTag_positions[1], label='Video Y', color='r')
+                axs_2.set_ylabel('Video Y Coordinate (px)')
+
 
                 fig.tight_layout()
                 fig.show()
 
-                fig2, axs2 = plt.subplots(3, 1, figsize=(10, 10))
 
-                axs2[0].plot(lags, x_correlation / np.max(x_correlation), label='X Correlation', color='b')
-                axs2[0].set_title('X Correlation')
-                axs2[0].set_xlabel('Video start (s)')
-                axs2[0].set_ylabel('Correlation Coefficient')
-                axs2[0].legend()
-                axs2[1].plot(lags, y_correlation / np.max(y_correlation), label='Y Correlation', color='b')
-                axs2[1].set_title('Y Correlation')
-                axs2[1].set_xlabel('Video start (s)')
-                axs2[1].set_ylabel('Correlation Coefficient')
-                axs2[1].legend()
-                axs2[2].plot(lags, correlation / 2, label='Correlation', color='b')
-                axs2[2].set_title('Correlation')
-                axs2[2].set_xlabel('Video start (s)')
-                axs2[2].set_ylabel('Correlation Coefficient')
-                axs2[2].axvline(self.video_starts[video], color='r', linestyle='--', label='Best Video Start Time')
-                axs2[2].axvline(self.video_start_estimates[video], color='g', linestyle=':', label='Video Start Time Estimate')
-                axs2[2].legend()
 
-                fig2.tight_layout()
-                fig2.show()
+                fig1, axs1 = plt.subplots(2, 1, figsize=(10, 10))
+                axs1[0].plot(flight_csv_interpolated_t, flight_positions_dot[0], label='Flight X', color='b')
+                axs1[0].plot([],[], label='Video X', color='r') # Placeholder for Video X
+                axs1[0].set_title('X Velocity')
+                axs1[1].set_xlabel('Time (s)')
+                axs1[0].set_ylabel('Flight X Velocity (m/s)')
+                axs1[0].legend()
+
+                ax1_1 = axs1[0].twinx()
+                ax1_1.plot(video_interpolated_t + self.video_starts[video], aprilTag_positions_dot[0], label='Video X', color='r')
+                ax1_1.set_ylabel('Video X Velocity (px/s)')
+
+
+                axs1[1].plot(flight_csv_interpolated_t, flight_positions_dot[1] / max_flight_positions_dot_1, label='Flight Y', color='b')
+                axs1[1].plot([],[], label='Video Y', color='r')  # Placeholder for Video Y
+                axs1[1].set_title('Y Velocity')
+                axs1[1].set_xlabel('Time (s)')
+                axs1[1].set_ylabel('Flight Y Velocity (m/s)')
+                axs1[1].legend()
+
+                ax1_2 = axs1[1].twinx()
+                ax1_2.plot(video_interpolated_t + self.video_starts[video], aprilTag_positions_dot[1], label='Video Y', color='r')
+                ax1_2.set_ylabel('Video Y Velocity (px/s)')
+
+
+                fig1.tight_layout()
+                fig1.show()
+
+
+
+                fig3, axs3 = plt.subplots(3, 1, figsize=(10, 10))
+
+                axs3[0].plot(lags, x_correlation / np.max(x_correlation), label='X Correlation', color='b')
+                axs3[0].set_title('X Correlation')
+                axs3[0].set_xlabel('Video start (s)')
+                axs3[0].set_ylabel('Correlation Coefficient')
+                axs3[0].legend()
+                axs3[1].plot(lags, y_correlation / np.max(y_correlation), label='Y Correlation', color='b')
+                axs3[1].set_title('Y Correlation')
+                axs3[1].set_xlabel('Video start (s)')
+                axs3[1].set_ylabel('Correlation Coefficient')
+                axs3[1].legend()
+                axs3[2].plot(lags, correlation / 2, label='Correlation', color='b')
+                axs3[2].set_title('Correlation')
+                axs3[2].set_xlabel('Video start (s)')
+                axs3[2].set_ylabel('Correlation Coefficient')
+                axs3[2].axvline(self.video_starts[video], color='r', linestyle='--', label='Best Video Start Time')
+                axs3[2].axvline(self.video_start_estimates[video], color='g', linestyle=':', label='Video Start Time Estimate')
+                axs3[2].legend()
+
+                fig3.tight_layout()
+                fig3.show()
 
                 plt.show()
             video += 1
@@ -345,7 +393,7 @@ class DroneData:
         print(f"Video start times: {self.video_starts}")
 
     def get_pixel_from_position(self, video: int, timestamp: float, position: tuple[float, float]):
-        R = getR(self.compass_heading, self.gimbal_pitch)
+        R = from_euler_zxy(-self.compass_heading, self.gimbal_pitch - 90, 0)
 
         Cw = np.array([
             self.x(timestamp + self.video_starts[video]),
@@ -368,7 +416,7 @@ class DroneData:
 
 
     def get_position_from_pixel(self, video: int, timestamp: float, pixel: tuple[float, float]):
-        R = getR(self.compass_heading, self.gimbal_pitch)
+        R = from_euler_zxy(-self.compass_heading, self.gimbal_pitch - 90, 0)
 
         uv1 = np.array([pixel[0], pixel[1], 1.0]).reshape(3,1)
         ray_cam = self.optimal_camera_matrix_inv @ uv1
@@ -398,11 +446,31 @@ class DroneData:
         
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(self.calibration_finished[video] * self.fps) + 1)
         if self.showVideo:
-            cv2.namedWindow('Drone Footage', cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_NORMAL)
+            cv2.namedWindow('Drone Footage', cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
 
-        all = []
+        if self.showCharts:
+            fig, ax = plt.subplots(figsize=(8, 6),ncols=1)
+            fig.set_dpi(144)
+            line, = ax.plot([],[], color="#00000000")
+            scat = ax.scatter([], [], c='Red', s=100, alpha=0.5)
+            ax.set_xlabel("World X")
+            ax.set_ylabel("World Y")
+            ax.set_title("Live Detections")
 
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            all = []
+
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+            all_x = []
+            all_y = []
+
+            fig.tight_layout()
+            fig.canvas.draw()
+            mg_plot = np.array(fig.canvas.renderer.buffer_rgba())
+            live_detections_img = cv2.cvtColor(mg_plot,cv2.COLOR_RGB2BGR)
+            cv2.namedWindow("Live Detections", cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+            cv2.imshow("Live Detections", live_detections_img)
+
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -412,7 +480,10 @@ class DroneData:
 
             timestamp = frame_number / self.fps
 
-            print(f"{_CYAN}Analyzing frame... {_BOLD}[{frame_number + 1}/{frame_count}]{_RESET}", end="")
+            if self.debug:
+                print(f"{_CYAN}Analyzing frame... {_BOLD}[{frame_number + 1}/{frame_count}]{_RESET}", end="")
+            else:
+                print(f"{_CYAN}Analyzing frame... {_BOLD}[{frame_number + 1}/{frame_count}]{_RESET}")
             dst = cv2.remap(frame, self.map1, self.map2, cv2.INTER_LINEAR)
             x, y, w, h = self.roi
             dst = dst[y:y+h, x:x+w]
@@ -420,52 +491,91 @@ class DroneData:
             if function:
                 detections = function(dst)
             else:
-                gray_frame = cv2.cvtColor(dst, cv2.COLOR_BGR2GRAY)
+                gray_frame = cv2.cvtColor(dst, cv2.COLOR_RGB2GRAY)
                 detections_ = self.AprilTagDetector.detect(gray_frame)
 
                 detections = [{"x": d.center[0], "y": d.center[1], "id": d.tag_id} for d in detections_]
+                
             
             for d in detections:
                 world = self.get_position_from_pixel(video, timestamp, (d['x'], d['y']))
                 d["world_x"] = world[0]
                 d["world_y"] = world[1]
 
+                if self.showCharts:
+                    all_x.append(world[0])
+                    all_y.append(world[1])
+            
             detection = {
                 "timestamp": timestamp + self.video_starts[video],
                 "frame": frame_number,
                 "detections": detections
             }
 
-            print(" ", detection)
+            if self.debug:
+                print(" ", detection)
 
             all.append(detection)
 
+            if self.showCharts:
+                win_w = cv2.getWindowImageRect("Live Detections")[2]
+                win_h = cv2.getWindowImageRect("Live Detections")[3]
+
+                dpi = fig.get_dpi()
+                fig.set_size_inches(win_w / dpi, win_h / dpi, forward=True)
+
+                line.set_data(all_x, all_y)
+                scat.set_offsets(np.c_[all_x, all_y])
+                scat.set_sizes([100] * len(all_x))
+                ax.relim()
+                ax.autoscale_view()
+                fig.canvas.draw()
+
+                mg_plot = np.array(fig.canvas.renderer.buffer_rgba())
+
+                live_detections_img = cv2.cvtColor(mg_plot,cv2.COLOR_RGB2BGR)
+                live_detections_img = cv2.resize(live_detections_img, (win_w, win_h), interpolation=cv2.INTER_LINEAR)
+                cv2.imshow("Live Detections", live_detections_img)
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    break
+        
             if self.showVideo:
+                pos = self.get_pixel_from_position(video, timestamp, (628904.06111469, 5516256.46633241))
+                pos_ = (round(pos[0]), round(pos[1]))
+                cv2.circle(dst, pos_, 10, (0, 0, 255), -1)
+
                 cv2.imshow('Drone Footage', dst)
 
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
                     break
-            
             if frame_number >= frame_count - 1:
                 break
 
         return all
 
-def getR(heading, pitch):
-    H = np.deg2rad(heading)
-    G = np.deg2rad(pitch)
 
-    f = np.array([-math.sin(H) * math.cos(G),
-                    -math.cos(H) * math.cos(G),
-                    math.sin(G)])
+def from_euler_zxy(z, x, y):
 
-    up_world = np.array([0.0, 0.0, 1.0])
-    x = np.cross(up_world, f)
-    x /= np.linalg.norm(x)
+    z, x, y = np.radians([z, x, y])
 
-    y = np.cross(f, x)
+    cz, sz = np.cos(z), np.sin(z)
+    cx, sx = np.cos(x), np.sin(x)
+    cy, sy = np.cos(y), np.sin(y)
 
-    R = np.vstack([x, y, f])
 
+    Rz = np.array([[cz, -sz, 0],
+                   [sz,  cz, 0],
+                   [ 0,   0, 1]])
+
+    Rx = np.array([[1,  0,   0],
+                   [0, cx, -sx],
+                   [0, sx,  cx]])
+
+    Ry = np.array([[ cy, 0, sy],
+                   [  0, 1,  0],
+                   [-sy, 0, cy]])
+
+    R = Rz @ Ry @ Rx
     return R

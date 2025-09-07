@@ -30,10 +30,10 @@ d = drone_survey.DroneData(
         always_xy=True
     ), # WGS84 to UTM zone 14N
     showVideo=False, # show video output while syncing or analyzing
+    showCharts=True, # show charts while syncing
     debug=True, # show debug information
 )
 
 d.sync(["..."]) # optionally specify cache file location, one for each video
-d.showVideo = True
 
 data = d.analyze(0) # analyze the first video

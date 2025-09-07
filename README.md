@@ -1,4 +1,4 @@
-# drone-survey 0.0.3
+# drone-survey 0.0.4
 
 ## Overview
 Affordable drone surveying method using free tools and low cost DJI drones.
@@ -18,7 +18,7 @@ import pyproj
 
 # DJI Mini 4 Pro at 4K/100FPS (slow-mo)
 d = drone_survey.DroneData(
-    flight_csv_file="...", # AirData csv file path
+    flight_csv_file="...", # AirData flight data CSV file path
     video_files=["..."], # video file paths
     fps=100, # video FPS
     resolution=(3840, 2160), # video resolution (width, height)
@@ -29,7 +29,7 @@ d = drone_survey.DroneData(
     f_y=2.9099e+03, # focal length y (pixels)
     c_x=1920, # optical center x (pixels)
     c_y=1080, # optical center y (pixels)
-    distortion=np.array([0.0705, -0.1303, 0, 0, 0]), # lens distortion coefficients
+    distortion=np.array([0.0705, -0.1303, 0, 0, 0]), # lens distortion OpenCV coefficients
     max_missing_frames=200, # maximum frames without AprilTags allowed while syncing
     timestep=0.001, # time step when syncing (s)
     AprilTagDetector=Detector(
@@ -43,11 +43,11 @@ d = drone_survey.DroneData(
         always_xy=True
     ), # WGS84 to UTM zone 14N
     showVideo=False, # show video output while syncing or analyzing
+    showCharts=True, # show charts while syncing
     debug=True, # show debug information
 )
 
 d.sync(["..."]) # optionally specify cache file location, one for each video
-d.showVideo = True
 
 data = d.analyze(0) # analyze the first video
 ```
