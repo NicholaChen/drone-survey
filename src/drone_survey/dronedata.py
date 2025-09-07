@@ -541,10 +541,6 @@ class DroneData:
                     break
         
             if self.showVideo:
-                pos = self.get_pixel_from_position(video, timestamp, (628904.06111469, 5516256.46633241))
-                pos_ = (round(pos[0]), round(pos[1]))
-                cv2.circle(dst, pos_, 10, (0, 0, 255), -1)
-
                 cv2.imshow('Drone Footage', dst)
 
                 key = cv2.waitKey(1) & 0xFF
