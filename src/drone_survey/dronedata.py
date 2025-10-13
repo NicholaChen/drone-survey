@@ -9,7 +9,8 @@ from matplotlib import pyplot as plt
 import pyproj
 from pupil_apriltags import Detector
 from scipy.interpolate import CubicSpline
-from scipy.signal import correlate, correlation_lags
+from scipy.signal import correlate, correlation_lags, savgol_filter
+import json
 
 
 _RED = '\033[31m'
@@ -32,7 +33,7 @@ class DroneData:
                  fps: float = 29.97, 
                  resolution: tuple[int, int] = (3840, 2160),
                  compass_heading: float = 0.0,
-                 altitude: float = 2.0,
+                 altitude: float = None,
                  gimbal_pitch: float = -90.0,
                  f_x: float = 2000.0,
                  f_y: float = 2000.0,
@@ -99,6 +100,11 @@ class DroneData:
         x = []
         y = []
 
+        altitudes = []
+
+        x_velocities = []
+        y_velocities = []
+
         self.video_start_estimates = [] # used to estimate the start of videos from flight data
         for row in flight_csv_file_reader:
             if int(row["time(millisecond)"]) != last:
@@ -113,6 +119,22 @@ class DroneData:
                 x.append(_x)
                 y.append(_y)
 
+
+                # NED to ENU
+                if " xSpeed(mph)" in row:
+                    y_velocities.append(float(row[" xSpeed(mph)"]) * (1609.34) / 3600)
+                if " ySpeed(mph)" in row:
+                    x_velocities.append(float(row[" ySpeed(mph)"]) * (1609.34) / 3600)
+                if " xSpeed(m/s)" in row:
+                    y_velocities.append(float(row[" xSpeed(m/s)"]))
+                if " ySpeed(m/s)" in row:
+                    x_velocities.append(float(row[" ySpeed(m/s)"]))
+
+                if "height_above_takeoff(meters)" in row and altitude is None:
+                    altitudes.append(float(row["height_above_takeoff(meters)"]))
+                if "height_sonar(feet)" in row and altitude is None:
+                    altitudes.append(float(row["height_sonar(feet)"]) / 3.28084) # feet to meters
+
                 if row["isVideo"] == "1" and lastVideo == "0": # checks when the video starts (i.e. when isVideo changes from 0 to 1)
                     self.video_start_estimates.append(int(row["time(millisecond)"]) / 1000)
                 lastVideo = row["isVideo"]
@@ -120,9 +142,26 @@ class DroneData:
         x = np.array(x)
         y = np.array(y)
 
+        smoothed_x = savgol_filter(x, 51, 3)
+        smoothed_y = savgol_filter(y, 51, 3)
+
+        x_velocities = np.array(x_velocities)
+        y_velocities = np.array(y_velocities)
+
         self.timestamps = np.array(timestamps)
         self.x = CubicSpline(self.timestamps, x)
         self.y = CubicSpline(self.timestamps, y)
+
+        self.x_smooth = CubicSpline(self.timestamps, smoothed_x)
+        self.y_smooth = CubicSpline(self.timestamps, smoothed_y)
+        
+        if altitude is None:
+            altitudes = np.array(altitudes)
+            altitudes = savgol_filter(altitudes, 51, 3)
+            self.altitudes = CubicSpline(self.timestamps, altitudes)
+
+        self.x_velocities = CubicSpline(self.timestamps, x_velocities)
+        self.y_velocities = CubicSpline(self.timestamps, y_velocities)
 
         print(f"{_GREEN}Flight CSV File data loaded successfully!{_RESET}")
     
@@ -152,7 +191,7 @@ class DroneData:
 
 
             video_file_name = os.path.splitext(os.path.basename(video_file))[0]
-            video_file_name = "." + video_file_name + ".csv"
+            video_file_name = video_file_name + ".csv"
             if video_cache_files is not None and video_cache_files is list[str] and video_cache_files[video] is not None and video < len(video_cache_files):
                 video_cache_csv_path = video_cache_files[video].replace("\\", "/")
             else:
@@ -346,8 +385,7 @@ class DroneData:
                 ax1_1.plot(video_interpolated_t + self.video_starts[video], aprilTag_positions_dot[0], label='Video X', color='r')
                 ax1_1.set_ylabel('Video X Velocity (px/s)')
 
-
-                axs1[1].plot(flight_csv_interpolated_t, flight_positions_dot[1] / max_flight_positions_dot_1, label='Flight Y', color='b')
+                axs1[1].plot(flight_csv_interpolated_t, flight_positions_dot[1], label='Flight Y', color='b')
                 axs1[1].plot([],[], label='Video Y', color='r')  # Placeholder for Video Y
                 axs1[1].set_title('Y Velocity')
                 axs1[1].set_xlabel('Time (s)')
@@ -395,11 +433,18 @@ class DroneData:
     def get_pixel_from_position(self, video: int, timestamp: float, position: tuple[float, float]):
         R = from_euler_zxy(-self.compass_heading, self.gimbal_pitch - 90, 0)
 
-        Cw = np.array([
-            self.x(timestamp + self.video_starts[video]),
-            self.y(timestamp + self.video_starts[video]),
-            self.altitude
-        ]).reshape(3, 1)
+        if self.altitude is None:
+            Cw = np.array([
+                self.x(timestamp + self.video_starts[video]),
+                self.y(timestamp + self.video_starts[video]),
+                self.altitudes(timestamp + self.video_starts[video])
+            ]).reshape(3, 1)
+        else:
+            Cw = np.array([
+                self.x(timestamp + self.video_starts[video]),
+                self.y(timestamp + self.video_starts[video]),
+                self.altitude
+            ]).reshape(3, 1)
 
         Pw = np.array([position[0], position[1], 0]).reshape(3, 1)
 
@@ -422,19 +467,131 @@ class DroneData:
         ray_cam = self.optimal_camera_matrix_inv @ uv1
 
         Z_world = 0.0
-        cam_center_world = np.array([
-            self.x(timestamp + self.video_starts[video]),
-            self.y(timestamp + self.video_starts[video]),
-            self.altitude
-        ]).reshape(3,1)
+        if self.altitude is None:
+            cam_center_world = np.array([
+                self.x_smooth(timestamp + self.video_starts[video]),
+                self.y_smooth(timestamp + self.video_starts[video]),
+                self.altitudes(timestamp + self.video_starts[video])
+            ]).reshape(3,1)
+        else:
+            cam_center_world = np.array([
+                self.x_smooth(timestamp + self.video_starts[video]),
+                self.y_smooth(timestamp + self.video_starts[video]),
+                self.altitude
+            ]).reshape(3,1)
 
         ray_world = R.T @ ray_cam
 
         scale = (Z_world - cam_center_world[2,0]) / ray_world[2,0]
         Pw = cam_center_world + scale * ray_world
 
-        return Pw.flatten() 
+        return Pw.flatten()
     
+    def detect(self, video: int, function: callable = None, timestamps = None, cache_file_path=None):
+        '''
+        Run detections in the video frame by frame without analyzing the results.
+        '''
+        print(f"{_YELLOW}Detecting in video: {self.video_files[video]}{_RESET}")
+        cap = self.caps[video]
+        
+        if not cap.isOpened():
+            raise Exception(f"{_RED}Could not open video file: {self.video_files[video]}{_RESET}")
+        if timestamps is None:
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            timestamps = [(int(self.calibration_finished[video] * self.fps) + 1, frame_count)]
+        
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 5)
+
+        video_file_name = os.path.splitext(os.path.basename(self.video_files[video]))[0]
+        video_file_name = video_file_name + "_detections" + ".csv"
+        if cache_file_path is not None and os.path.exists(cache_file_path):
+            pass
+        else:
+            cache_file_path = os.path.join(os.path.dirname(self.video_files[video]), video_file_name).replace("\\", "/")
+        
+        if os.path.exists(cache_file_path):
+            with open(cache_file_path, 'r') as f:
+                if self.debug:
+                    print(f"Reading video detections cache CSV: {cache_file_path}")
+                reader = csv.reader(f, delimiter=';')
+                all_detections = {}
+                for row in reader:
+                    for i in range(len(row)):
+                        row[i] = row[i].strip()
+
+                        if i == 0:
+                            all_detections[int(row[i])] = []
+                        elif i>=2:
+                            d = row[i].split(",")
+
+                            if len(d) < 3:
+                                continue
+                            all_detections[int(row[0])].append({
+                                "timestamp": float(row[1]),
+                                "id": int(d[0]),
+                                "x": float(d[1]),
+                                "y": float(d[2])
+                            })
+        else:
+            all_detections = {}
+        
+        if self.showVideo:
+            cv2.namedWindow('Drone Footage', cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+
+        for start, end in timestamps:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+            
+            while cap.get(cv2.CAP_PROP_POS_FRAMES) < end:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                self.frame_number = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+                if self.frame_number in all_detections:
+                    if self.debug:
+                        print(f"{_CYAN}Frame {_BOLD}{self.frame_number}{_RESET}{_CYAN} already processed, skipping...{_RESET}")
+                    continue
+                if self.debug:
+                    print(f"{_CYAN}Detecting in frame... {_BOLD}[{self.frame_number + 1}/{end}]{_RESET}", end="")
+                dst = cv2.remap(frame, self.map1, self.map2, cv2.INTER_LINEAR)
+                x, y, w, h = self.roi
+                dst = dst[y:y+h, x:x+w]
+
+                if function:
+                    detections = function(self, dst)
+                else:
+                    gray_frame = cv2.cvtColor(dst, cv2.COLOR_RGB2GRAY)
+                    detections_ = self.AprilTagDetector.detect(gray_frame)
+
+                    detections = [{"x": d.center[0], "y": d.center[1], "id": d.tag_id} for d in detections_]
+                
+                for d in detections:
+                    d["timestamp"] = self.frame_number / self.fps + self.video_starts[video]
+                
+                if self.debug:
+                    print(" ", detections)
+                all_detections[self.frame_number] = detections
+
+                with open(cache_file_path, "a") as f:
+                    f.write(f"{self.frame_number};")
+                    f.write(f"{self.frame_number / self.fps + self.video_starts[video]};")
+                    for d in detections:
+                        f.write(f"{d['id']},{d['x']},{d['y']};")
+                    f.write("\n")
+
+                if self.showVideo:
+                    for detection in detections:
+                        cv2.circle(dst, (int(detection['x']), int(detection['y'])), 10, (0, 255, 0), 5)
+                        cv2.putText(dst, f"ID: {detection['id']}", (int(detection['x']) + 15, int(detection['y']) - 15), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 3)
+
+                    cv2.imshow('Drone Footage', dst)
+
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        break
+
+        return all_detections
+
     def analyze(self, video: int, function: callable = None):
         '''
         Analyze the video frame by frame.
@@ -445,6 +602,18 @@ class DroneData:
             raise Exception(f"{_RED}Could not open video file: {self.video_files[video]}{_RESET}")
         
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(self.calibration_finished[video] * self.fps) + 1)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 17000)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 5)
+
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        all = []
+
+        all_x = []
+        all_y = []
+
+        cam_x = []
+        cam_y = []
         if self.showVideo:
             cv2.namedWindow('Drone Footage', cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
 
@@ -452,23 +621,20 @@ class DroneData:
             fig, ax = plt.subplots(figsize=(8, 6),ncols=1)
             fig.set_dpi(144)
             line, = ax.plot([],[], color="#00000000")
+            line2, = ax.plot([],[], color="#00000000")
             scat = ax.scatter([], [], c='Red', s=100, alpha=0.5)
+            scat2 = ax.scatter([], [], c='Blue', s=50, alpha=0.5)
             ax.set_xlabel("World X")
             ax.set_ylabel("World Y")
             ax.set_title("Live Detections")
 
-            all = []
-
-            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-            all_x = []
-            all_y = []
 
             fig.tight_layout()
             fig.canvas.draw()
             mg_plot = np.array(fig.canvas.renderer.buffer_rgba())
             live_detections_img = cv2.cvtColor(mg_plot,cv2.COLOR_RGB2BGR)
             cv2.namedWindow("Live Detections", cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+            cv2.resizeWindow("Live Detections", 800, 600)
             cv2.imshow("Live Detections", live_detections_img)
 
         while True:
@@ -476,20 +642,20 @@ class DroneData:
             if not ret:
                 break
             
-            frame_number = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+            self.frame_number = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
 
-            timestamp = frame_number / self.fps
+            timestamp = self.frame_number / self.fps
 
             if self.debug:
-                print(f"{_CYAN}Analyzing frame... {_BOLD}[{frame_number + 1}/{frame_count}]{_RESET}", end="")
+                print(f"{_CYAN}Analyzing frame... {_BOLD}[{self.frame_number + 1}/{frame_count}]{_RESET}", end="")
             else:
-                print(f"{_CYAN}Analyzing frame... {_BOLD}[{frame_number + 1}/{frame_count}]{_RESET}")
+                print(f"{_CYAN}Analyzing frame... {_BOLD}[{self.frame_number + 1}/{frame_count}]{_RESET}")
             dst = cv2.remap(frame, self.map1, self.map2, cv2.INTER_LINEAR)
             x, y, w, h = self.roi
             dst = dst[y:y+h, x:x+w]
             
             if function:
-                detections = function(dst)
+                detections = function(self, dst)
             else:
                 gray_frame = cv2.cvtColor(dst, cv2.COLOR_RGB2GRAY)
                 detections_ = self.AprilTagDetector.detect(gray_frame)
@@ -501,6 +667,7 @@ class DroneData:
                 world = self.get_position_from_pixel(video, timestamp, (d['x'], d['y']))
                 d["world_x"] = world[0]
                 d["world_y"] = world[1]
+                d["longitude"], d["latitude"] = self.pyprojTransformer.transform(world[0], world[1], direction=pyproj.enums.TransformDirection.INVERSE)
 
                 if self.showCharts:
                     all_x.append(world[0])
@@ -508,8 +675,9 @@ class DroneData:
             
             detection = {
                 "timestamp": timestamp + self.video_starts[video],
-                "frame": frame_number,
-                "detections": detections
+                "frame": self.frame_number,
+                "detections": detections,
+                "altitude": self.altitudes(timestamp + self.video_starts[video]) if self.altitude is None else self.altitude,
             }
 
             if self.debug:
@@ -518,35 +686,50 @@ class DroneData:
             all.append(detection)
 
             if self.showCharts:
+                cam_x.append(self.x_smooth(timestamp + self.video_starts[video]))
+                cam_y.append(self.y_smooth(timestamp + self.video_starts[video]))
+
                 win_w = cv2.getWindowImageRect("Live Detections")[2]
                 win_h = cv2.getWindowImageRect("Live Detections")[3]
 
                 dpi = fig.get_dpi()
-                fig.set_size_inches(win_w / dpi, win_h / dpi, forward=True)
+                if (win_w > 0 and win_h > 0):
+                    fig.set_size_inches(win_w / dpi, win_h / dpi, forward=True)
+                else:
+                    fig.set_size_inches(800 / dpi, 600 / dpi, forward=True)
 
                 line.set_data(all_x, all_y)
+                line2.set_data(cam_x, cam_y)
                 scat.set_offsets(np.c_[all_x, all_y])
                 scat.set_sizes([100] * len(all_x))
+                scat2.set_offsets(np.c_[cam_x, cam_y])
+                scat2.set_sizes([50] * len(cam_x))
                 ax.relim()
                 ax.autoscale_view()
                 fig.canvas.draw()
 
-                mg_plot = np.array(fig.canvas.renderer.buffer_rgba())
-
-                live_detections_img = cv2.cvtColor(mg_plot,cv2.COLOR_RGB2BGR)
-                live_detections_img = cv2.resize(live_detections_img, (win_w, win_h), interpolation=cv2.INTER_LINEAR)
-                cv2.imshow("Live Detections", live_detections_img)
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    break
+                try:
+                    mg_plot = np.array(fig.canvas.renderer.buffer_rgba())
+                    live_detections_img = cv2.cvtColor(mg_plot,cv2.COLOR_RGB2BGR)
+                    live_detections_img = cv2.resize(live_detections_img, (win_w, win_h), interpolation=cv2.INTER_LINEAR)
+                    cv2.imshow("Live Detections", live_detections_img)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        break
+                except Exception as e:
+                    print(f"{_RED}Error updating live detections plot: {e}{_RESET}")
         
             if self.showVideo:
+                for detection in detections:
+                    cv2.circle(dst, (int(detection['x']), int(detection['y'])), 10, (0, 255, 0), 5)
+                    cv2.putText(dst, f"ID: {detection['id']}", (int(detection['x']) + 15, int(detection['y']) - 15), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 3)
+                
                 cv2.imshow('Drone Footage', dst)
 
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
                     break
-            if frame_number >= frame_count - 1:
+            if self.frame_number >= frame_count - 1:
                 break
 
         return all

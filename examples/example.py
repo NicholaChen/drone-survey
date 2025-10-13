@@ -2,6 +2,7 @@ import drone_survey
 import numpy as np
 from pupil_apriltags import Detector
 import pyproj
+import json
 
 # DJI Mini 4 Pro at 4K/100FPS (slow-mo)
 d = drone_survey.DroneData(
@@ -10,7 +11,7 @@ d = drone_survey.DroneData(
     fps=100, # video FPS
     resolution=(3840, 2160), # video resolution (width, height)
     compass_heading=0, # compass heading (degrees) [0deg is North, 90deg is East, etc...]
-    altitude=2, # drone altitude (m)
+    altitude=None, # drone altitude (m). If None, uses sonar altitude from CSV file
     gimbal_pitch=-90, # gimbal pitch (degrees)
     f_x=2.9099e+03, # focal length x (pixels)
     f_y=2.9099e+03, # focal length y (pixels)
@@ -36,4 +37,10 @@ d = drone_survey.DroneData(
 
 d.sync(["..."]) # optionally specify cache file location, one for each video
 
+# data = d.detect(0) # detect in the first video without analyzing the results
+# with open("detections.json", "w") as json_file: # write detections to JSON file
+#     json.dump(data, json_file)
+
 data = d.analyze(0) # analyze the first video
+with open("output.json", "w") as json_file: # write output to JSON file
+    json.dump(data, json_file)
