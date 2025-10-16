@@ -1,16 +1,17 @@
-# drone-survey 0.0.5
+# drone-survey 0.1.0
 
 ## Overview
 Affordable drone surveying method using free tools and low cost DJI drones.
 
 ## Installation
-```bash
+```console
 python -m pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple drone-survey
 ```
 
 ## Usage
 More information to come...
-```import drone_survey
+```python
+import drone_survey
 import numpy as np
 from pupil_apriltags import Detector
 import pyproj
@@ -47,7 +48,9 @@ d = drone_survey.DroneData(
     debug=True, # show debug information
 )
 
-d.sync(["..."]) # optionally specify cache file location, one for each video
+data = d.sync(["..."]) # optionally specify cache file location, one for each video
+with open("sync.json", "w") as json_file:
+    json.dump(data, json_file, separators=(',', ':'))
 
 # data = d.detect(0) # detect in the first video without analyzing the results
 # with open("detections.json", "w") as json_file: # write detections to JSON file
@@ -55,5 +58,17 @@ d.sync(["..."]) # optionally specify cache file location, one for each video
 
 data = d.analyze(0) # analyze the first video
 with open("output.json", "w") as json_file: # write output to JSON file
-    json.dump(data, json_file)
+    json.dump(data, json_file, separators=(',', ':'))
+
+d.close()
 ```
+
+## Acknowledgements
+This project makes use of the following open-source Python libraries:
+
+- [NumPy](https://numpy.org/) – BSD License
+- [OpenCV-Python](https://opencv.org/) – BSD License
+- [Matplotlib](https://matplotlib.org/) – PSF-based License
+- [SciPy](https://scipy.org/) – BSD License
+- [PyProj](https://pyproj4.github.io/pyproj/stable/) – MIT License
+- [pupil_apriltags](https://github.com/pupil-labs/apriltags) – MIT License

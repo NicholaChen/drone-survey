@@ -219,14 +219,15 @@ class DroneData:
             else:
                 april_tags = {}
 
-            cap.set(cv2.CAP_PROP_POS_FRAMES, max(april_tags.keys(),default=-1) + 1)
-            
+            start = max(april_tags.keys(),default=-1) + 1
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+
             print(f"{_YELLOW}Processing video file: {video_file}{_RESET}")
 
             video_started = False
 
 
-            if max(april_tags.keys(),default=-1) - 1 < frame_count and self.showVideo and missing_frames < self.max_missing_frames:
+            if start < frame_count and self.showVideo and missing_frames < self.max_missing_frames:
                 video_started = True
                 print(f"Total frames in video: {frame_count}")
                 cv2.namedWindow('Drone Footage', cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_NORMAL)
@@ -234,7 +235,7 @@ class DroneData:
             cancelled = False
 
             while True:
-                if missing_frames >= self.max_missing_frames:
+                if missing_frames >= self.max_missing_frames or start >= frame_count:
                     break
                 ret, frame = cap.read()
                 frame_number = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
@@ -430,6 +431,8 @@ class DroneData:
 
         print(f"Video start times: {self.video_starts}")
 
+        return (self.video_starts, self.calibration_finished, flight_csv_interpolated_t.tolist(), flight_positions.tolist(), aprilTag_positions.tolist(), flight_positions_dot.tolist(), aprilTag_positions_dot.tolist(), lags.tolist(), x_correlation.tolist(), y_correlation.tolist(), correlation.tolist())
+
     def get_pixel_from_position(self, video: int, timestamp: float, position: tuple[float, float]):
         R = from_euler_zxy(-self.compass_heading, self.gimbal_pitch - 90, 0)
 
@@ -503,7 +506,7 @@ class DroneData:
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 5)
 
         video_file_name = os.path.splitext(os.path.basename(self.video_files[video]))[0]
-        video_file_name = video_file_name + "_detections" + ".csv"
+        video_file_name = video_file_name + "_detections" + ".txt"
         if cache_file_path is not None and os.path.exists(cache_file_path):
             pass
         else:
@@ -512,7 +515,7 @@ class DroneData:
         if os.path.exists(cache_file_path):
             with open(cache_file_path, 'r') as f:
                 if self.debug:
-                    print(f"Reading video detections cache CSV: {cache_file_path}")
+                    print(f"Reading video detections cache file: {cache_file_path}")
                 reader = csv.reader(f, delimiter=';')
                 all_detections = {}
                 for row in reader:
@@ -541,16 +544,27 @@ class DroneData:
         for start, end in timestamps:
             cap.set(cv2.CAP_PROP_POS_FRAMES, start)
             
+            self.frame_number = start
+            fn = self.frame_number
             while cap.get(cv2.CAP_PROP_POS_FRAMES) < end:
+                if fn in all_detections:
+                    if self.debug and fn != self.frame_number:
+                        print(f"{_CYAN}Frame {_BOLD}{fn + 1}{_RESET}{_CYAN} already processed, skipping...{_RESET}")
+
+                    fn += 1
+                    continue
+                else:
+                    if fn != int(cap.get(cv2.CAP_PROP_POS_FRAMES)):
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, fn)
+
+                    fn = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+                 
                 ret, frame = cap.read()
                 if not ret:
                     break
                 
                 self.frame_number = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
-                if self.frame_number in all_detections:
-                    if self.debug:
-                        print(f"{_CYAN}Frame {_BOLD}{self.frame_number}{_RESET}{_CYAN} already processed, skipping...{_RESET}")
-                    continue
+
                 if self.debug:
                     print(f"{_CYAN}Detecting in frame... {_BOLD}[{self.frame_number + 1}/{end}]{_RESET}", end="")
                 dst = cv2.remap(frame, self.map1, self.map2, cv2.INTER_LINEAR)
@@ -602,7 +616,6 @@ class DroneData:
             raise Exception(f"{_RED}Could not open video file: {self.video_files[video]}{_RESET}")
         
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(self.calibration_finished[video] * self.fps) + 1)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 17000)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 5)
 
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -665,8 +678,8 @@ class DroneData:
             
             for d in detections:
                 world = self.get_position_from_pixel(video, timestamp, (d['x'], d['y']))
-                d["world_x"] = world[0]
-                d["world_y"] = world[1]
+                d["world_x"] = float(world[0])
+                d["world_y"] = float(world[1])
                 d["longitude"], d["latitude"] = self.pyprojTransformer.transform(world[0], world[1], direction=pyproj.enums.TransformDirection.INVERSE)
 
                 if self.showCharts:
@@ -674,10 +687,10 @@ class DroneData:
                     all_y.append(world[1])
             
             detection = {
-                "timestamp": timestamp + self.video_starts[video],
+                "timestamp": float(timestamp + self.video_starts[video]),
                 "frame": self.frame_number,
                 "detections": detections,
-                "altitude": self.altitudes(timestamp + self.video_starts[video]) if self.altitude is None else self.altitude,
+                "altitude": float(self.altitudes(timestamp + self.video_starts[video]) if self.altitude is None else self.altitude),
             }
 
             if self.debug:
@@ -733,6 +746,16 @@ class DroneData:
                 break
 
         return all
+    
+    def close(self):
+        '''
+        Close all video captures and windows.
+        '''
+        for cap in self.caps:
+            if cap.isOpened():
+                cap.release()
+        
+        cv2.destroyAllWindows()
 
 
 def from_euler_zxy(z, x, y):

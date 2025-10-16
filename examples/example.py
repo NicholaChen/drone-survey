@@ -35,12 +35,16 @@ d = drone_survey.DroneData(
     debug=True, # show debug information
 )
 
-d.sync(["..."]) # optionally specify cache file location, one for each video
+data = d.sync(["..."]) # optionally specify cache file location, one for each video
+with open("sync.json", "w") as json_file:
+    json.dump(data, json_file, separators=(',', ':'))
 
 # data = d.detect(0) # detect in the first video without analyzing the results
 # with open("detections.json", "w") as json_file: # write detections to JSON file
-#     json.dump(data, json_file)
+#     json.dump(data, json_file, separators=(',', ':'))
 
 data = d.analyze(0) # analyze the first video
 with open("output.json", "w") as json_file: # write output to JSON file
-    json.dump(data, json_file)
+    json.dump(data, json_file, separators=(',', ':'))
+
+d.close()
