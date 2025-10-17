@@ -1,4 +1,4 @@
-# drone-survey 0.1.0
+# drone-survey 0.2.0
 
 ## Overview
 Affordable drone surveying method using free tools and low cost DJI drones.

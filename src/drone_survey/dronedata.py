@@ -620,36 +620,10 @@ class DroneData:
 
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        all = []
-
-        all_x = []
-        all_y = []
-
-        cam_x = []
-        cam_y = []
         if self.showVideo:
             cv2.namedWindow('Drone Footage', cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
 
-        if self.showCharts:
-            fig, ax = plt.subplots(figsize=(8, 6),ncols=1)
-            fig.set_dpi(144)
-            line, = ax.plot([],[], color="#00000000")
-            line2, = ax.plot([],[], color="#00000000")
-            scat = ax.scatter([], [], c='Red', s=100, alpha=0.5)
-            scat2 = ax.scatter([], [], c='Blue', s=50, alpha=0.5)
-            ax.set_xlabel("World X")
-            ax.set_ylabel("World Y")
-            ax.set_title("Live Detections")
-
-
-            fig.tight_layout()
-            fig.canvas.draw()
-            mg_plot = np.array(fig.canvas.renderer.buffer_rgba())
-            live_detections_img = cv2.cvtColor(mg_plot,cv2.COLOR_RGB2BGR)
-            cv2.namedWindow("Live Detections", cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
-            cv2.resizeWindow("Live Detections", 800, 600)
-            cv2.imshow("Live Detections", live_detections_img)
-
+        all = []
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -681,57 +655,19 @@ class DroneData:
                 d["world_x"] = float(world[0])
                 d["world_y"] = float(world[1])
                 d["longitude"], d["latitude"] = self.pyprojTransformer.transform(world[0], world[1], direction=pyproj.enums.TransformDirection.INVERSE)
-
-                if self.showCharts:
-                    all_x.append(world[0])
-                    all_y.append(world[1])
             
             detection = {
                 "timestamp": float(timestamp + self.video_starts[video]),
                 "frame": self.frame_number,
                 "detections": detections,
+                "x": float(self.x_smooth(timestamp + self.video_starts[video])),
+                "y": float(self.y_smooth(timestamp + self.video_starts[video])),
                 "altitude": float(self.altitudes(timestamp + self.video_starts[video]) if self.altitude is None else self.altitude),
             }
 
             if self.debug:
                 print(" ", detection)
-
-            all.append(detection)
-
-            if self.showCharts:
-                cam_x.append(self.x_smooth(timestamp + self.video_starts[video]))
-                cam_y.append(self.y_smooth(timestamp + self.video_starts[video]))
-
-                win_w = cv2.getWindowImageRect("Live Detections")[2]
-                win_h = cv2.getWindowImageRect("Live Detections")[3]
-
-                dpi = fig.get_dpi()
-                if (win_w > 0 and win_h > 0):
-                    fig.set_size_inches(win_w / dpi, win_h / dpi, forward=True)
-                else:
-                    fig.set_size_inches(800 / dpi, 600 / dpi, forward=True)
-
-                line.set_data(all_x, all_y)
-                line2.set_data(cam_x, cam_y)
-                scat.set_offsets(np.c_[all_x, all_y])
-                scat.set_sizes([100] * len(all_x))
-                scat2.set_offsets(np.c_[cam_x, cam_y])
-                scat2.set_sizes([50] * len(cam_x))
-                ax.relim()
-                ax.autoscale_view()
-                fig.canvas.draw()
-
-                try:
-                    mg_plot = np.array(fig.canvas.renderer.buffer_rgba())
-                    live_detections_img = cv2.cvtColor(mg_plot,cv2.COLOR_RGB2BGR)
-                    live_detections_img = cv2.resize(live_detections_img, (win_w, win_h), interpolation=cv2.INTER_LINEAR)
-                    cv2.imshow("Live Detections", live_detections_img)
-                    key = cv2.waitKey(1) & 0xFF
-                    if key == ord('q'):
-                        break
-                except Exception as e:
-                    print(f"{_RED}Error updating live detections plot: {e}{_RESET}")
-        
+            all.append(detection)       
             if self.showVideo:
                 for detection in detections:
                     cv2.circle(dst, (int(detection['x']), int(detection['y'])), 10, (0, 255, 0), 5)
